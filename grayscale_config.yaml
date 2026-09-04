@@ -1,0 +1,12 @@
+transform:
+  __class_fullname__: Compose
+  additional_targets: {}
+  is_check_shapes: true
+  transforms:
+    - __class_fullname__: ToGray
+      p: 1.0
+      num_output_channels: 3
+    - __class_fullname__: Resize
+      height: 256
+      width: 256
+      p: 1.0

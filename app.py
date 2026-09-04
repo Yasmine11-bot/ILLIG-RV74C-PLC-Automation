@@ -1,0 +1,223 @@
+from flask import (
+    Flask,
+    render_template,
+    request,
+    send_from_directory
+)
+
+from werkzeug.utils import secure_filename
+
+from anomalib.data import PredictDataset
+from anomalib.models import Patchcore
+from anomalib.engine import Engine
+
+import os
+
+
+# ============================================================
+# CONFIGURATION FLASK
+# ============================================================
+
+app = Flask(__name__)
+
+UPLOAD_FOLDER = r"C:\AI_ILLIG\uploads"
+
+app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
+app.config["MAX_CONTENT_LENGTH"] = 10 * 1024 * 1024
+
+
+# Création du dossier uploads s'il n'existe pas
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
+
+# ============================================================
+# MODELE PATCHCORE
+# ============================================================
+
+MODEL_PATH = (
+    r"C:\AI_ILLIG\results_illig\Patchcore"
+    r"\illig_piece\v13\weights\lightning\model.ckpt"
+)
+
+
+model = Patchcore(
+    backbone="resnet18",
+    coreset_sampling_ratio=0.1,
+)
+
+
+engine = Engine()
+
+
+# ============================================================
+# PAGE PRINCIPALE
+# ============================================================
+
+@app.route("/")
+def index():
+
+    return render_template(
+        "index.html"
+    )
+
+
+# ============================================================
+# INSPECTION
+# ============================================================
+
+@app.route("/inspect", methods=["POST"])
+def inspect():
+
+    # --------------------------------------------------------
+    # Vérifier qu'une image a été envoyée
+    # --------------------------------------------------------
+
+    if "image" not in request.files:
+
+        return render_template(
+            "index.html",
+            error="Aucune image n'a été sélectionnée."
+        )
+
+
+    file = request.files["image"]
+
+
+    # --------------------------------------------------------
+    # Vérifier le nom
+    # --------------------------------------------------------
+
+    if file.filename == "":
+
+        return render_template(
+            "index.html",
+            error="Aucune image n'a été sélectionnée."
+        )
+
+
+    # --------------------------------------------------------
+    # Sécuriser le nom du fichier
+    # --------------------------------------------------------
+
+    filename = secure_filename(file.filename)
+
+
+    # --------------------------------------------------------
+    # Sauvegarder l'image
+    # --------------------------------------------------------
+
+    image_path = os.path.join(
+        UPLOAD_FOLDER,
+        filename
+    )
+
+    file.save(image_path)
+
+
+    # --------------------------------------------------------
+    # Créer le dataset de prédiction
+    # --------------------------------------------------------
+
+    dataset = PredictDataset(
+        path=image_path,
+        image_size=(256, 256),
+    )
+
+
+    # --------------------------------------------------------
+    # Faire la prédiction avec PatchCore
+    # --------------------------------------------------------
+
+    predictions = engine.predict(
+        model=model,
+        dataset=dataset,
+        ckpt_path=MODEL_PATH,
+    )
+
+
+    # --------------------------------------------------------
+    # Vérifier le résultat
+    # --------------------------------------------------------
+
+    if predictions is None:
+
+        return render_template(
+            "index.html",
+            error="Aucune prédiction n'a été retournée."
+        )
+
+
+    # Une seule image est envoyée
+    prediction = predictions[0]
+
+
+    # --------------------------------------------------------
+    # Récupérer score et label
+    # --------------------------------------------------------
+
+    score = prediction.pred_score
+
+    label = prediction.pred_label
+
+
+    # Conversion Tensor → nombre Python
+    if hasattr(score, "item"):
+        score = score.item()
+
+    if hasattr(label, "item"):
+        label = label.item()
+
+
+    score = float(score)
+    label = int(label)
+
+
+    # --------------------------------------------------------
+    # Déterminer OK / NOK
+    # --------------------------------------------------------
+
+    if label == 0:
+
+        result = "OK"
+
+    else:
+
+        result = "NOK"
+
+
+    # --------------------------------------------------------
+    # Retourner le résultat dans le navigateur
+    # --------------------------------------------------------
+
+    return render_template(
+        "index.html",
+        result=result,
+        score=score,
+        filename=filename,
+    )
+
+
+# ============================================================
+# AFFICHER LES IMAGES UPLOADÉES
+# ============================================================
+
+@app.route("/uploads/<filename>")
+def uploaded_file(filename):
+
+    return send_from_directory(
+        UPLOAD_FOLDER,
+        filename
+    )
+
+
+# ============================================================
+# LANCEMENT DE FLASK
+# ============================================================
+
+if __name__ == "__main__":
+
+    app.run(
+        host="127.0.0.1",
+        port=5000,
+        debug=True
+    )
